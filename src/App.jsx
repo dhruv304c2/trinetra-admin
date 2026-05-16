@@ -29,6 +29,15 @@ const EMPTY_BANNER = {
   active: true,
 }
 
+const EMPTY_SITE_CONFIG = {
+  address: '',
+  phones: '',
+  primaryPhone: '',
+  whatsappNumber: '',
+  email: '',
+  hours: '',
+}
+
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('admin_token') || '')
   const [loginPassword, setLoginPassword] = useState('')
@@ -49,6 +58,8 @@ function App() {
   const [coachForm, setCoachForm] = useState(EMPTY_COACH)
   const [bannerForm, setBannerForm] = useState(EMPTY_BANNER)
   const [uploading, setUploading] = useState(false)
+  const [siteConfig, setSiteConfig] = useState(EMPTY_SITE_CONFIG)
+  const [siteConfigLoading, setSiteConfigLoading] = useState(false)
 
   const logout = () => {
     localStorage.removeItem('admin_token')
@@ -116,9 +127,25 @@ function App() {
     setUnreadCount(data.filter((m) => !m.read).length)
   }
 
+  const fetchSiteConfig = async () => {
+    const res = await authFetch(`${API}/site-config`)
+    if (!res.ok) throw new Error('Failed to fetch site config')
+    const data = await res.json()
+    if (data && data._id) {
+      setSiteConfig({
+        address: data.address || '',
+        phones: (data.phones || []).join(', '),
+        primaryPhone: data.primaryPhone || '',
+        whatsappNumber: data.whatsappNumber || '',
+        email: data.email || '',
+        hours: data.hours || '',
+      })
+    }
+  }
+
   const fetchAll = async () => {
     try {
-      await Promise.all([fetchPlans(), fetchCoaches(), fetchHeroBanners(), fetchMessages()])
+      await Promise.all([fetchPlans(), fetchCoaches(), fetchHeroBanners(), fetchMessages(), fetchSiteConfig()])
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -365,6 +392,35 @@ function App() {
     }
   }
 
+  const updateSiteConfigField = (field, value) => {
+    setSiteConfig((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleSiteConfigSubmit = async (e) => {
+    e.preventDefault()
+    setSiteConfigLoading(true)
+    try {
+      const body = {
+        ...siteConfig,
+        phones: siteConfig.phones.split(',').map((p) => p.trim()).filter(Boolean),
+      }
+      const res = await authFetch(`${API}/site-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to save')
+      }
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSiteConfigLoading(false)
+    }
+  }
+
   const removeImage = (index) => {
     setCoachForm((prev) => ({
       ...prev,
@@ -421,7 +477,7 @@ function App() {
           <span>TRINETRA</span> Admin
         </h1>
         <div className="admin-header-actions">
-          {tab !== 'inbox' && tab !== 'leads' && (
+          {tab !== 'inbox' && tab !== 'leads' && tab !== 'settings' && (
             <button className="btn-new" onClick={openCreate}>
               + New {tab === 'plans' ? 'Plan' : tab === 'coaches' ? 'Coach' : 'Banner'}
             </button>
@@ -445,6 +501,9 @@ function App() {
         </button>
         <button className={`tab ${tab === 'leads' ? 'tab-active' : ''}`} onClick={() => setTab('leads')}>
           Leads
+        </button>
+        <button className={`tab ${tab === 'settings' ? 'tab-active' : ''}`} onClick={() => setTab('settings')}>
+          Settings
         </button>
       </div>
 
@@ -519,6 +578,79 @@ function App() {
             </table>
           </div>
         )
+      ) : tab === 'settings' ? (
+        <div className="settings-section" style={{ maxWidth: 600, margin: '0 auto', padding: '24px 16px' }}>
+          <h2 style={{ marginBottom: 20 }}>Site Configuration</h2>
+          <form onSubmit={handleSiteConfigSubmit}>
+            <div className="form-group">
+              <label>Address</label>
+              <textarea
+                value={siteConfig.address}
+                onChange={(e) => updateSiteConfigField('address', e.target.value)}
+                placeholder="Full address"
+                required
+              />
+            </div>
+            <div className="form-group">
+              <label>Phone Numbers (comma-separated)</label>
+              <input
+                type="text"
+                value={siteConfig.phones}
+                onChange={(e) => updateSiteConfigField('phones', e.target.value)}
+                placeholder="e.g. 8796986635, 9999663511"
+              />
+            </div>
+            <div className="form-group-row">
+              <div className="form-group">
+                <label>Primary Phone</label>
+                <input
+                  type="text"
+                  value={siteConfig.primaryPhone}
+                  onChange={(e) => updateSiteConfigField('primaryPhone', e.target.value)}
+                  placeholder="e.g. 8796986635"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>WhatsApp Number</label>
+                <input
+                  type="text"
+                  value={siteConfig.whatsappNumber}
+                  onChange={(e) => updateSiteConfigField('whatsappNumber', e.target.value)}
+                  placeholder="e.g. 918796986635"
+                  required
+                />
+              </div>
+            </div>
+            <div className="form-group-row">
+              <div className="form-group">
+                <label>Email</label>
+                <input
+                  type="email"
+                  value={siteConfig.email}
+                  onChange={(e) => updateSiteConfigField('email', e.target.value)}
+                  placeholder="contact@example.com"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Hours</label>
+                <input
+                  type="text"
+                  value={siteConfig.hours}
+                  onChange={(e) => updateSiteConfigField('hours', e.target.value)}
+                  placeholder="e.g. Mon-Sat: 6:00 AM - 9:00 PM"
+                  required
+                />
+              </div>
+            </div>
+            <div className="form-actions">
+              <button type="submit" className="btn-save" disabled={siteConfigLoading}>
+                {siteConfigLoading ? 'Saving...' : 'Save Settings'}
+              </button>
+            </div>
+          </form>
+        </div>
       ) : tab === 'plans' ? (
         plans.length === 0 ? (
           <div className="empty-state">
