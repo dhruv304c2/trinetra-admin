@@ -60,6 +60,7 @@ function App() {
   const [uploading, setUploading] = useState(false)
   const [siteConfig, setSiteConfig] = useState(EMPTY_SITE_CONFIG)
   const [siteConfigLoading, setSiteConfigLoading] = useState(false)
+  const [trialBookings, setTrialBookings] = useState([])
 
   const logout = () => {
     localStorage.removeItem('admin_token')
@@ -143,9 +144,26 @@ function App() {
     }
   }
 
+  const fetchTrialBookings = async () => {
+    const res = await authFetch(`${API}/trial-bookings`)
+    if (!res.ok) throw new Error('Failed to fetch trial bookings')
+    setTrialBookings(await res.json())
+  }
+
+  const handleDeleteBooking = async (id) => {
+    if (!window.confirm('Delete this booking? The slot will become available again.')) return
+    try {
+      const res = await authFetch(`${API}/trial-bookings/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to delete')
+      fetchTrialBookings()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const fetchAll = async () => {
     try {
-      await Promise.all([fetchPlans(), fetchCoaches(), fetchHeroBanners(), fetchMessages(), fetchSiteConfig()])
+      await Promise.all([fetchPlans(), fetchCoaches(), fetchHeroBanners(), fetchMessages(), fetchSiteConfig(), fetchTrialBookings()])
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -477,7 +495,7 @@ function App() {
           <span>TRINETRA</span> Admin
         </h1>
         <div className="admin-header-actions">
-          {tab !== 'inbox' && tab !== 'leads' && tab !== 'settings' && (
+          {tab !== 'inbox' && tab !== 'leads' && tab !== 'settings' && tab !== 'bookings' && (
             <button className="btn-new" onClick={openCreate}>
               + New {tab === 'plans' ? 'Plan' : tab === 'coaches' ? 'Coach' : 'Banner'}
             </button>
@@ -498,6 +516,9 @@ function App() {
         </button>
         <button className={`tab ${tab === 'inbox' ? 'tab-active' : ''}`} onClick={() => setTab('inbox')}>
           Inbox {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
+        </button>
+        <button className={`tab ${tab === 'bookings' ? 'tab-active' : ''}`} onClick={() => setTab('bookings')}>
+          Bookings
         </button>
         <button className={`tab ${tab === 'leads' ? 'tab-active' : ''}`} onClick={() => setTab('leads')}>
           Leads
@@ -545,6 +566,43 @@ function App() {
                 )}
               </div>
             ))}
+          </div>
+        )
+      ) : tab === 'bookings' ? (
+        trialBookings.length === 0 ? (
+          <div className="empty-state">
+            <p>No trial bookings yet</p>
+            <span>Trial class bookings from the website will appear here.</span>
+          </div>
+        ) : (
+          <div className="leads-section">
+            <div className="leads-count">{trialBookings.length} booking{trialBookings.length !== 1 ? 's' : ''}</div>
+            <table className="leads-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Slot</th>
+                  <th>Batch</th>
+                  <th>Name</th>
+                  <th>Phone</th>
+                  <th>Email</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {trialBookings.map((b) => (
+                  <tr key={b._id}>
+                    <td>{b.date}</td>
+                    <td>{b.slot}</td>
+                    <td style={{ textTransform: 'capitalize' }}>{b.batch}</td>
+                    <td>{b.name}</td>
+                    <td>{b.phone ? <a href={`tel:${b.phone}`}>{b.phone}</a> : '--'}</td>
+                    <td><a href={`mailto:${b.email}`}>{b.email}</a></td>
+                    <td><button className="btn-delete" onClick={() => handleDeleteBooking(b._id)}>Delete</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )
       ) : tab === 'leads' ? (
