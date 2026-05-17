@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import './App.css'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api/admin'
+const PUBLIC_API = API.replace(/\/admin$/, '')
 
 const EMPTY_PLAN = {
   icon: '',
@@ -43,7 +44,7 @@ function App() {
   const [loginPassword, setLoginPassword] = useState('')
   const [loginError, setLoginError] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
-  const [tab, setTab] = useState('plans')
+  const [tab, setTab] = useState('bookings')
   const [plans, setPlans] = useState([])
   const [coaches, setCoaches] = useState([])
   const [heroBanners, setHeroBanners] = useState([])
@@ -61,6 +62,18 @@ function App() {
   const [siteConfig, setSiteConfig] = useState(EMPTY_SITE_CONFIG)
   const [siteConfigLoading, setSiteConfigLoading] = useState(false)
   const [trialBookings, setTrialBookings] = useState([])
+  const [contacts, setContacts] = useState([])
+  const [trialRules, setTrialRules] = useState(null)
+  const [trialRulesLoading, setTrialRulesLoading] = useState(false)
+  const [slots, setSlots] = useState([])
+  const [newSlotStart, setNewSlotStart] = useState('')
+  const [newSlotEnd, setNewSlotEnd] = useState('')
+  const [newSlotLabel, setNewSlotLabel] = useState('')
+  const [rescheduleBooking, setRescheduleBooking] = useState(null)
+  const [rescheduleDate, setRescheduleDate] = useState('')
+  const [rescheduleSlots, setRescheduleSlots] = useState(null)
+  const [rescheduleSelected, setRescheduleSelected] = useState(null)
+  const [rescheduleLoading, setRescheduleLoading] = useState(false)
 
   const logout = () => {
     localStorage.removeItem('admin_token')
@@ -150,6 +163,144 @@ function App() {
     setTrialBookings(await res.json())
   }
 
+  const fetchContacts = async () => {
+    const res = await authFetch(`${API}/contacts`)
+    if (!res.ok) throw new Error('Failed to fetch contacts')
+    setContacts(await res.json())
+  }
+
+  const handleDeleteContact = async (id) => {
+    if (!window.confirm('Delete this contact?')) return
+    try {
+      const res = await authFetch(`${API}/contacts/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to delete')
+      setContacts((prev) => prev.filter((c) => c._id !== id))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const fetchTrialRules = async () => {
+    const res = await authFetch(`${API}/trial-rules`)
+    if (!res.ok) throw new Error('Failed to fetch trial rules')
+    setTrialRules(await res.json())
+  }
+
+  const fetchSlots = async () => {
+    const res = await authFetch(`${API}/slots`)
+    if (!res.ok) throw new Error('Failed to fetch slots')
+    setSlots(await res.json())
+  }
+
+  const handleTrialRulesSubmit = async (e) => {
+    e.preventDefault()
+    setTrialRulesLoading(true)
+    try {
+      const res = await authFetch(`${API}/trial-rules`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingWindowDays: trialRules.bookingWindowDays,
+          blockedWeekdays: trialRules.blockedWeekdays,
+          maxBookingsPerSlot: trialRules.maxBookingsPerSlot,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to save trial rules')
+      setTrialRules(await res.json())
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTrialRulesLoading(false)
+    }
+  }
+
+  const handleToggleSlot = async (slot) => {
+    try {
+      const res = await authFetch(`${API}/slots/${slot._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !slot.active }),
+      })
+      if (!res.ok) throw new Error('Failed to update slot')
+      setSlots((prev) => prev.map((s) => s._id === slot._id ? { ...s, active: !s.active } : s))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleAddSlot = async (e) => {
+    e.preventDefault()
+    if (!newSlotStart.trim() || !newSlotEnd.trim()) return
+    try {
+      const res = await authFetch(`${API}/slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start: newSlotStart.trim(), end: newSlotEnd.trim(), label: newSlotLabel.trim() }),
+      })
+      if (!res.ok) throw new Error('Failed to add slot')
+      const slot = await res.json()
+      setSlots((prev) => [...prev, slot])
+      setNewSlotStart('')
+      setNewSlotEnd('')
+      setNewSlotLabel('')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleDeleteSlot = async (id) => {
+    if (!window.confirm('Delete this slot?')) return
+    try {
+      const res = await authFetch(`${API}/slots/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to delete slot')
+      setSlots((prev) => prev.filter((s) => s._id !== id))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleRescheduleDateChange = async (date) => {
+    setRescheduleDate(date)
+    setRescheduleSelected(null)
+    setRescheduleSlots(null)
+    if (!date) return
+    try {
+      const res = await fetch(`${PUBLIC_API}/trial-slots?date=${date}`)
+      if (!res.ok) throw new Error('Failed to load slots')
+      setRescheduleSlots(await res.json())
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleRescheduleSubmit = async () => {
+    if (!rescheduleBooking || !rescheduleDate || !rescheduleSelected) return
+    setRescheduleLoading(true)
+    const morningSlots = rescheduleSlots?.morning?.map((s) => s.time) || []
+    const batch = morningSlots.includes(rescheduleSelected) ? 'morning' : 'evening'
+    try {
+      const res = await authFetch(`${API}/trial-bookings/${rescheduleBooking._id}/reschedule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: rescheduleDate, slot: rescheduleSelected, batch }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Reschedule failed')
+      }
+      setRescheduleBooking(null)
+      setRescheduleDate('')
+      setRescheduleSlots(null)
+      setRescheduleSelected(null)
+      fetchTrialBookings()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setRescheduleLoading(false)
+    }
+  }
+
   const handleDeleteBooking = async (id) => {
     if (!window.confirm('Delete this booking? The slot will become available again.')) return
     try {
@@ -163,7 +314,7 @@ function App() {
 
   const fetchAll = async () => {
     try {
-      await Promise.all([fetchPlans(), fetchCoaches(), fetchHeroBanners(), fetchMessages(), fetchSiteConfig(), fetchTrialBookings()])
+      await Promise.all([fetchPlans(), fetchCoaches(), fetchHeroBanners(), fetchMessages(), fetchSiteConfig(), fetchTrialBookings(), fetchTrialRules(), fetchContacts(), fetchSlots()])
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -196,7 +347,7 @@ function App() {
       discountedPrice: plan.discountedPrice || '',
       active: plan.active,
     })
-    setShowModal(true)
+    setShowModal('plan')
   }
 
   const openEditCoach = (coach) => {
@@ -208,7 +359,7 @@ function App() {
       images: coach.images || [],
       active: coach.active,
     })
-    setShowModal(true)
+    setShowModal('coach')
   }
 
   const openEditBanner = (banner) => {
@@ -219,7 +370,7 @@ function App() {
       label: banner.label || '',
       active: banner.active,
     })
-    setShowModal(true)
+    setShowModal('banner')
   }
 
   const closeModal = () => {
@@ -332,17 +483,15 @@ function App() {
     }
   }
 
-  const handleDelete = async (id) => {
-    const entityMap = { plans: 'plan', coaches: 'coach', heroBanners: 'banner' }
-    const entity = entityMap[tab] || tab
-    if (!window.confirm(`Delete this ${entity}?`)) return
+  const handleDelete = async (id, entityType) => {
+    if (!window.confirm(`Delete this ${entityType}?`)) return
     try {
-      const endpoint = tab === 'heroBanners' ? 'hero-banners' : tab
-      const res = await authFetch(`${API}/${endpoint}/${id}`, { method: 'DELETE' })
+      const endpointMap = { plan: 'plans', coach: 'coaches', banner: 'hero-banners' }
+      const res = await authFetch(`${API}/${endpointMap[entityType]}/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Failed to delete')
-      if (tab === 'plans') fetchPlans()
-      else if (tab === 'coaches') fetchCoaches()
-      else if (tab === 'heroBanners') fetchHeroBanners()
+      if (entityType === 'plan') fetchPlans()
+      else if (entityType === 'coach') fetchCoaches()
+      else if (entityType === 'banner') fetchHeroBanners()
     } catch (err) {
       setError(err.message)
     }
@@ -495,25 +644,11 @@ function App() {
           <span>TRINETRA</span> Admin
         </h1>
         <div className="admin-header-actions">
-          {tab !== 'inbox' && tab !== 'leads' && tab !== 'settings' && tab !== 'bookings' && (
-            <button className="btn-new" onClick={openCreate}>
-              + New {tab === 'plans' ? 'Plan' : tab === 'coaches' ? 'Coach' : 'Banner'}
-            </button>
-          )}
           <button className="btn-logout" onClick={logout}>Logout</button>
         </div>
       </header>
 
       <div className="tabs">
-        <button className={`tab ${tab === 'plans' ? 'tab-active' : ''}`} onClick={() => setTab('plans')}>
-          Membership Plans
-        </button>
-        <button className={`tab ${tab === 'coaches' ? 'tab-active' : ''}`} onClick={() => setTab('coaches')}>
-          Coaches
-        </button>
-        <button className={`tab ${tab === 'heroBanners' ? 'tab-active' : ''}`} onClick={() => setTab('heroBanners')}>
-          Hero Banners
-        </button>
         <button className={`tab ${tab === 'inbox' ? 'tab-active' : ''}`} onClick={() => setTab('inbox')}>
           Inbox {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
         </button>
@@ -586,6 +721,7 @@ function App() {
                   <th>Name</th>
                   <th>Phone</th>
                   <th>Email</th>
+                  <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
@@ -598,7 +734,27 @@ function App() {
                     <td>{b.name}</td>
                     <td>{b.phone ? <a href={`tel:${b.phone}`}>{b.phone}</a> : '--'}</td>
                     <td><a href={`mailto:${b.email}`}>{b.email}</a></td>
-                    <td><button className="btn-delete" onClick={() => handleDeleteBooking(b._id)}>Delete</button></td>
+                    <td><span style={{ textTransform: 'capitalize', color: b.status === 'confirmed' ? '#22c55e' : '#ef4444' }}>{b.status}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {b.status === 'confirmed' && (
+                          <button
+                            className="btn-icon"
+                            title="Reschedule"
+                            onClick={() => { setRescheduleBooking(b); setRescheduleDate(''); setRescheduleSlots(null); setRescheduleSelected(null) }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                          </button>
+                        )}
+                        <button
+                          className="btn-icon btn-icon-danger"
+                          title="Delete"
+                          onClick={() => handleDeleteBooking(b._id)}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -606,30 +762,42 @@ function App() {
           </div>
         )
       ) : tab === 'leads' ? (
-        messages.length === 0 ? (
+        contacts.length === 0 ? (
           <div className="empty-state">
             <p>No leads collected yet</p>
             <span>Contact details from form submissions will appear here.</span>
           </div>
         ) : (
           <div className="leads-section">
-            <div className="leads-count">{messages.length} contact{messages.length !== 1 ? 's' : ''} collected</div>
+            <div className="leads-count">{contacts.length} contact{contacts.length !== 1 ? 's' : ''} collected</div>
             <table className="leads-table">
               <thead>
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
                   <th>Phone</th>
+                  <th>Source</th>
                   <th>Date</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {messages.map((msg) => (
-                  <tr key={msg._id}>
-                    <td>{msg.name}</td>
-                    <td><a href={`mailto:${msg.email}`}>{msg.email}</a></td>
-                    <td>{msg.phone ? <a href={`tel:${msg.phone}`}>{msg.phone}</a> : <span className="leads-empty">--</span>}</td>
-                    <td className="leads-date">{new Date(msg.createdAt).toLocaleDateString()}</td>
+                {contacts.map((c) => (
+                  <tr key={c._id}>
+                    <td>{c.name}</td>
+                    <td><a href={`mailto:${c.email}`}>{c.email}</a></td>
+                    <td>{c.phone ? <a href={`tel:${c.phone}`}>{c.phone}</a> : <span className="leads-empty">--</span>}</td>
+                    <td style={{ textTransform: 'capitalize' }}>{c.source}</td>
+                    <td className="leads-date">{new Date(c.createdAt).toLocaleDateString()}</td>
+                    <td>
+                      <button
+                        className="btn-icon btn-icon-danger"
+                        title="Delete"
+                        onClick={() => handleDeleteContact(c._id)}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -637,207 +805,328 @@ function App() {
           </div>
         )
       ) : tab === 'settings' ? (
-        <div className="settings-section" style={{ maxWidth: 600, margin: '0 auto', padding: '24px 16px' }}>
-          <h2 style={{ marginBottom: 20 }}>Site Configuration</h2>
-          <form onSubmit={handleSiteConfigSubmit}>
-            <div className="form-group">
-              <label>Address</label>
-              <textarea
-                value={siteConfig.address}
-                onChange={(e) => updateSiteConfigField('address', e.target.value)}
-                placeholder="Full address"
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Phone Numbers (comma-separated)</label>
+        <div className="settings-section" style={{ maxWidth: 800, margin: '0 auto', padding: '24px 16px' }}>
+
+          {/* --- Site Configuration --- */}
+          <div className="settings-card">
+            <h2 className="settings-card-title">Site Configuration</h2>
+            <form onSubmit={handleSiteConfigSubmit}>
+              <div className="form-group">
+                <label>Address</label>
+                <textarea
+                  value={siteConfig.address}
+                  onChange={(e) => updateSiteConfigField('address', e.target.value)}
+                  placeholder="Full address"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Phone Numbers (comma-separated)</label>
+                <input
+                  type="text"
+                  value={siteConfig.phones}
+                  onChange={(e) => updateSiteConfigField('phones', e.target.value)}
+                  placeholder="e.g. 8796986635, 9999663511"
+                />
+              </div>
+              <div className="form-group-row">
+                <div className="form-group">
+                  <label>Primary Phone</label>
+                  <input
+                    type="text"
+                    value={siteConfig.primaryPhone}
+                    onChange={(e) => updateSiteConfigField('primaryPhone', e.target.value)}
+                    placeholder="e.g. 8796986635"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>WhatsApp Number</label>
+                  <input
+                    type="text"
+                    value={siteConfig.whatsappNumber}
+                    onChange={(e) => updateSiteConfigField('whatsappNumber', e.target.value)}
+                    placeholder="e.g. 918796986635"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="form-group-row">
+                <div className="form-group">
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    value={siteConfig.email}
+                    onChange={(e) => updateSiteConfigField('email', e.target.value)}
+                    placeholder="contact@example.com"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Hours</label>
+                  <input
+                    type="text"
+                    value={siteConfig.hours}
+                    onChange={(e) => updateSiteConfigField('hours', e.target.value)}
+                    placeholder="e.g. Mon-Sat: 6:00 AM - 9:00 PM"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="btn-save" disabled={siteConfigLoading}>
+                  {siteConfigLoading ? 'Saving...' : 'Save Settings'}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* --- Batch Slots --- */}
+          <div className="settings-card">
+            <h2 className="settings-card-title">Batch Slots</h2>
+            <p style={{ color: '#888', fontSize: 13, margin: '0 0 16px' }}>Displayed on the website schedule and used for trial bookings. Batch is auto-derived from time (AM = morning, PM = evening).</p>
+            {['morning', 'evening'].map((batch) => {
+              const batchSlots = slots.filter((s) => s.batch === batch)
+              return (
+                <div key={batch} style={{ marginBottom: 20 }}>
+                  <h3 style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, color: '#999', marginBottom: 10 }}>{batch} batch</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {batchSlots.map((slot) => (
+                      <div key={slot._id} className="slot-row">
+                        <button
+                          type="button"
+                          className={`slot-toggle ${slot.active ? 'slot-toggle-on' : ''}`}
+                          onClick={() => handleToggleSlot(slot)}
+                          title={slot.active ? 'Active — click to disable' : 'Inactive — click to enable'}
+                        >
+                          <span className="slot-toggle-knob" />
+                        </button>
+                        <div className={`slot-info ${!slot.active ? 'slot-time-off' : ''}`}>
+                          <span className="slot-time">{slot.displayLabel || slot.time}</span>
+                          {slot.label && <span className="slot-time-sub">{slot.time}</span>}
+                        </div>
+                        <button
+                          className="btn-icon btn-icon-danger"
+                          title="Delete slot"
+                          onClick={() => handleDeleteSlot(slot._id)}
+                          style={{ marginLeft: 'auto' }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </div>
+                    ))}
+                    {batchSlots.length === 0 && <p style={{ color: '#666', fontSize: 13, margin: 0 }}>No slots configured</p>}
+                  </div>
+                </div>
+              )
+            })}
+            <form onSubmit={handleAddSlot} className="slot-add-form">
               <input
                 type="text"
-                value={siteConfig.phones}
-                onChange={(e) => updateSiteConfigField('phones', e.target.value)}
-                placeholder="e.g. 8796986635, 9999663511"
+                value={newSlotStart}
+                onChange={(e) => setNewSlotStart(e.target.value)}
+                placeholder="Start (e.g. 5:30 AM)"
+                style={{ flex: 1 }}
+                required
               />
+              <input
+                type="text"
+                value={newSlotEnd}
+                onChange={(e) => setNewSlotEnd(e.target.value)}
+                placeholder="End (e.g. 7:00 AM)"
+                style={{ flex: 1 }}
+                required
+              />
+              <input
+                type="text"
+                value={newSlotLabel}
+                onChange={(e) => setNewSlotLabel(e.target.value)}
+                placeholder="Label (optional)"
+                style={{ flex: 1 }}
+              />
+              <button type="submit" className="btn-save" style={{ whiteSpace: 'nowrap' }}>+ Add</button>
+            </form>
+          </div>
+
+          {/* --- Trial Booking Rules --- */}
+          {trialRules && (
+            <div className="settings-card">
+              <h2 className="settings-card-title">Trial Booking Rules</h2>
+              <form onSubmit={handleTrialRulesSubmit}>
+                <div className="form-group-row">
+                  <div className="form-group">
+                    <label>Booking Window (days)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={trialRules.bookingWindowDays}
+                      onChange={(e) => setTrialRules((r) => ({ ...r, bookingWindowDays: Number(e.target.value) }))}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Max Bookings Per Slot</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={trialRules.maxBookingsPerSlot}
+                      onChange={(e) => setTrialRules((r) => ({ ...r, maxBookingsPerSlot: Number(e.target.value) }))}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Blocked Weekdays</label>
+                  <div className="weekday-grid">
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => (
+                      <button
+                        key={day}
+                        type="button"
+                        className={`weekday-btn ${trialRules.blockedWeekdays.includes(i) ? 'weekday-btn-active' : ''}`}
+                        onClick={() => {
+                          setTrialRules((r) => ({
+                            ...r,
+                            blockedWeekdays: r.blockedWeekdays.includes(i)
+                              ? r.blockedWeekdays.filter((d) => d !== i)
+                              : [...r.blockedWeekdays, i],
+                          }))
+                        }}
+                      >
+                        {day}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="form-actions">
+                  <button type="submit" className="btn-save" disabled={trialRulesLoading}>
+                    {trialRulesLoading ? 'Saving...' : 'Save Rules'}
+                  </button>
+                </div>
+              </form>
             </div>
-            <div className="form-group-row">
-              <div className="form-group">
-                <label>Primary Phone</label>
-                <input
-                  type="text"
-                  value={siteConfig.primaryPhone}
-                  onChange={(e) => updateSiteConfigField('primaryPhone', e.target.value)}
-                  placeholder="e.g. 8796986635"
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>WhatsApp Number</label>
-                <input
-                  type="text"
-                  value={siteConfig.whatsappNumber}
-                  onChange={(e) => updateSiteConfigField('whatsappNumber', e.target.value)}
-                  placeholder="e.g. 918796986635"
-                  required
-                />
-              </div>
+          )}
+
+          {/* --- Membership Plans --- */}
+          <div className="settings-card">
+            <div className="settings-card-header">
+              <h2 className="settings-card-title" style={{ margin: 0, padding: 0, border: 'none' }}>Membership Plans</h2>
+              <button className="btn-new" onClick={() => { setEditing(null); setPlanForm(EMPTY_PLAN); setShowModal('plan') }}>+ New Plan</button>
             </div>
-            <div className="form-group-row">
-              <div className="form-group">
-                <label>Email</label>
-                <input
-                  type="email"
-                  value={siteConfig.email}
-                  onChange={(e) => updateSiteConfigField('email', e.target.value)}
-                  placeholder="contact@example.com"
-                  required
-                />
+            {plans.length === 0 ? (
+              <p style={{ color: '#666', fontSize: 13 }}>No plans yet. Click "+ New Plan" to create one.</p>
+            ) : (
+              <div className="program-list" style={{ margin: 0 }}>
+                {plans.map((p) => (
+                  <div key={p._id} className="program-row">
+                    <div className="program-row-icon">{p.icon || '\u{1F94A}'}</div>
+                    <div className="program-row-info">
+                      <h3>{p.title}</h3>
+                      <p>{p.description}</p>
+                    </div>
+                    <div className="program-row-meta">
+                      {p.discountedPrice && <span className="badge-price">{p.discountedPrice}</span>}
+                      {p.price && <span className={p.discountedPrice ? 'badge-original-price' : 'badge-price'}>{p.price}</span>}
+                      <span>{p.duration}</span>
+                      <span>{p.level}</span>
+                      <span className={p.active ? 'badge-active' : 'badge-inactive'}>
+                        {p.active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="program-row-actions">
+                      <button className="btn-edit" onClick={() => openEditPlan(p)}>Edit</button>
+                      <button className="btn-delete" onClick={() => handleDelete(p._id, 'plan')}>Delete</button>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="form-group">
-                <label>Hours</label>
-                <input
-                  type="text"
-                  value={siteConfig.hours}
-                  onChange={(e) => updateSiteConfigField('hours', e.target.value)}
-                  placeholder="e.g. Mon-Sat: 6:00 AM - 9:00 PM"
-                  required
-                />
+            )}
+          </div>
+
+          {/* --- Coaches --- */}
+          <div className="settings-card">
+            <div className="settings-card-header">
+              <h2 className="settings-card-title" style={{ margin: 0, padding: 0, border: 'none' }}>Coaches</h2>
+              <button className="btn-new" onClick={() => { setEditing(null); setCoachForm(EMPTY_COACH); setShowModal('coach') }}>+ New Coach</button>
+            </div>
+            {coaches.length === 0 ? (
+              <p style={{ color: '#666', fontSize: 13 }}>No coaches yet. Click "+ New Coach" to add one.</p>
+            ) : (
+              <div className="program-list" style={{ margin: 0 }}>
+                {coaches.map((c, i) => (
+                  <div key={c._id} className="program-row">
+                    <div className="reorder-buttons">
+                      <button className="btn-reorder" disabled={i === 0} onClick={() => moveCoach(i, -1)} title="Move up">&#9650;</button>
+                      <button className="btn-reorder" disabled={i === coaches.length - 1} onClick={() => moveCoach(i, 1)} title="Move down">&#9660;</button>
+                    </div>
+                    <div className="program-row-icon">{'\u{1F464}'}</div>
+                    <div className="program-row-info">
+                      <h3>{c.name}</h3>
+                      <p>{c.bio}</p>
+                    </div>
+                    <div className="program-row-meta">
+                      <span>{c.role}</span>
+                      <span className={c.active ? 'badge-active' : 'badge-inactive'}>
+                        {c.active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="program-row-actions">
+                      <button className="btn-edit" onClick={() => openEditCoach(c)}>Edit</button>
+                      <button className="btn-delete" onClick={() => handleDelete(c._id, 'coach')}>Delete</button>
+                    </div>
+                  </div>
+                ))}
               </div>
+            )}
+          </div>
+
+          {/* --- Hero Banners --- */}
+          <div className="settings-card">
+            <div className="settings-card-header">
+              <h2 className="settings-card-title" style={{ margin: 0, padding: 0, border: 'none' }}>Hero Banners</h2>
+              <button className="btn-new" onClick={() => { setEditing(null); setBannerForm(EMPTY_BANNER); setShowModal('banner') }}>+ New Banner</button>
             </div>
-            <div className="form-actions">
-              <button type="submit" className="btn-save" disabled={siteConfigLoading}>
-                {siteConfigLoading ? 'Saving...' : 'Save Settings'}
-              </button>
-            </div>
-          </form>
+            {heroBanners.length === 0 ? (
+              <p style={{ color: '#666', fontSize: 13 }}>No banners yet. Click "+ New Banner" to add one.</p>
+            ) : (
+              <div className="program-list" style={{ margin: 0 }}>
+                {heroBanners.map((b, i) => (
+                  <div key={b._id} className="program-row">
+                    <div className="reorder-buttons">
+                      <button className="btn-reorder" disabled={i === 0} onClick={() => moveBanner(i, -1)} title="Move up">&#9650;</button>
+                      <button className="btn-reorder" disabled={i === heroBanners.length - 1} onClick={() => moveBanner(i, 1)} title="Move down">&#9660;</button>
+                    </div>
+                    <div className="program-row-icon" style={{ width: 80, height: 60, overflow: 'hidden', borderRadius: 4 }}>
+                      {b.mediaType === 'video' ? (
+                        <video src={b.url} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <img src={b.url} alt={b.label || 'Banner'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )}
+                    </div>
+                    <div className="program-row-info">
+                      <h3>{b.label || '(No label)'}</h3>
+                    </div>
+                    <div className="program-row-meta">
+                      <span className="badge-active" style={{ background: b.mediaType === 'video' ? '#6366f1' : '#0ea5e9', color: '#fff' }}>
+                        {b.mediaType}
+                      </span>
+                      <span className={b.active ? 'badge-active' : 'badge-inactive'}>
+                        {b.active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="program-row-actions">
+                      <button className="btn-edit" onClick={() => openEditBanner(b)}>Edit</button>
+                      <button className="btn-delete" onClick={() => handleDelete(b._id, 'banner')}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      ) : tab === 'plans' ? (
-        plans.length === 0 ? (
-          <div className="empty-state">
-            <p>No membership plans yet</p>
-            <span>Click "+ New Plan" to create your first one.</span>
-          </div>
-        ) : (
-          <div className="program-list">
-            {plans.map((p) => (
-              <div key={p._id} className="program-row">
-                <div className="program-row-icon">{p.icon || '\u{1F94A}'}</div>
-                <div className="program-row-info">
-                  <h3>{p.title}</h3>
-                  <p>{p.description}</p>
-                </div>
-                <div className="program-row-meta">
-                  {p.discountedPrice && <span className="badge-price">{p.discountedPrice}</span>}
-                  {p.price && <span className={p.discountedPrice ? 'badge-original-price' : 'badge-price'}>{p.price}</span>}
-                  <span>{p.duration}</span>
-                  <span>{p.level}</span>
-                  <span className={p.active ? 'badge-active' : 'badge-inactive'}>
-                    {p.active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className="program-row-actions">
-                  <button className="btn-edit" onClick={() => openEditPlan(p)}>Edit</button>
-                  <button className="btn-delete" onClick={() => handleDelete(p._id)}>Delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      ) : tab === 'coaches' ? (
-        coaches.length === 0 ? (
-          <div className="empty-state">
-            <p>No coaches yet</p>
-            <span>Click "+ New Coach" to add your first one.</span>
-          </div>
-        ) : (
-          <div className="program-list">
-            {coaches.map((c, i) => (
-              <div key={c._id} className="program-row">
-                <div className="reorder-buttons">
-                  <button
-                    className="btn-reorder"
-                    disabled={i === 0}
-                    onClick={() => moveCoach(i, -1)}
-                    title="Move up"
-                  >&#9650;</button>
-                  <button
-                    className="btn-reorder"
-                    disabled={i === coaches.length - 1}
-                    onClick={() => moveCoach(i, 1)}
-                    title="Move down"
-                  >&#9660;</button>
-                </div>
-                <div className="program-row-icon">{'\u{1F464}'}</div>
-                <div className="program-row-info">
-                  <h3>{c.name}</h3>
-                  <p>{c.bio}</p>
-                </div>
-                <div className="program-row-meta">
-                  <span>{c.role}</span>
-                  <span className={c.active ? 'badge-active' : 'badge-inactive'}>
-                    {c.active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className="program-row-actions">
-                  <button className="btn-edit" onClick={() => openEditCoach(c)}>Edit</button>
-                  <button className="btn-delete" onClick={() => handleDelete(c._id)}>Delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      ) : (
-        heroBanners.length === 0 ? (
-          <div className="empty-state">
-            <p>No hero banners yet</p>
-            <span>Click "+ New Banner" to add your first one.</span>
-          </div>
-        ) : (
-          <div className="program-list">
-            {heroBanners.map((b, i) => (
-              <div key={b._id} className="program-row">
-                <div className="reorder-buttons">
-                  <button
-                    className="btn-reorder"
-                    disabled={i === 0}
-                    onClick={() => moveBanner(i, -1)}
-                    title="Move up"
-                  >&#9650;</button>
-                  <button
-                    className="btn-reorder"
-                    disabled={i === heroBanners.length - 1}
-                    onClick={() => moveBanner(i, 1)}
-                    title="Move down"
-                  >&#9660;</button>
-                </div>
-                <div className="program-row-icon" style={{ width: 80, height: 60, overflow: 'hidden', borderRadius: 4 }}>
-                  {b.mediaType === 'video' ? (
-                    <video src={b.url} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <img src={b.url} alt={b.label || 'Banner'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  )}
-                </div>
-                <div className="program-row-info">
-                  <h3>{b.label || '(No label)'}</h3>
-                </div>
-                <div className="program-row-meta">
-                  <span className="badge-active" style={{ background: b.mediaType === 'video' ? '#6366f1' : '#0ea5e9', color: '#fff' }}>
-                    {b.mediaType}
-                  </span>
-                  <span className={b.active ? 'badge-active' : 'badge-inactive'}>
-                    {b.active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className="program-row-actions">
-                  <button className="btn-edit" onClick={() => openEditBanner(b)}>Edit</button>
-                  <button className="btn-delete" onClick={() => handleDelete(b._id)}>Delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      )}
+      ) : null}
 
       {/* Plan Modal */}
-      {showModal && tab === 'plans' && (
+      {showModal === 'plan' && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>{editing ? 'Edit Plan' : 'New Membership Plan'}</h2>
@@ -934,7 +1223,7 @@ function App() {
       )}
 
       {/* Banner Modal */}
-      {showModal && tab === 'heroBanners' && (
+      {showModal === 'banner' && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>{editing ? 'Edit Banner' : 'New Hero Banner'}</h2>
@@ -988,7 +1277,7 @@ function App() {
       )}
 
       {/* Coach Modal */}
-      {showModal && tab === 'coaches' && (
+      {showModal === 'coach' && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>{editing ? 'Edit Coach' : 'New Coach'}</h2>
@@ -1059,6 +1348,62 @@ function App() {
                 <button type="submit" className="btn-save">{editing ? 'Update' : 'Create'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reschedule Modal */}
+      {rescheduleBooking && (
+        <div className="modal-overlay" onClick={() => setRescheduleBooking(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Reschedule Booking</h2>
+            <p style={{ marginBottom: 16, color: '#999' }}>
+              Current: <strong style={{ color: '#f5f5f5' }}>{rescheduleBooking.date}</strong> at <strong style={{ color: '#f5f5f5' }}>{rescheduleBooking.slot}</strong> ({rescheduleBooking.name})
+            </p>
+            <div className="form-group">
+              <label>New Date</label>
+              <input
+                type="date"
+                value={rescheduleDate}
+                onChange={(e) => handleRescheduleDateChange(e.target.value)}
+              />
+            </div>
+            {rescheduleSlots && (
+              <div className="form-group">
+                <label>Available Slots</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[...rescheduleSlots.morning, ...rescheduleSlots.evening].map((s) => (
+                    <button
+                      key={s.time}
+                      type="button"
+                      disabled={!s.available}
+                      onClick={() => setRescheduleSelected(s.time)}
+                      style={{
+                        padding: '8px 12px',
+                        background: rescheduleSelected === s.time ? '#d4af37' : s.available ? '#1a1a1a' : '#111',
+                        color: rescheduleSelected === s.time ? '#000' : s.available ? '#f5f5f5' : '#555',
+                        border: `1px solid ${rescheduleSelected === s.time ? '#d4af37' : '#333'}`,
+                        cursor: s.available ? 'pointer' : 'not-allowed',
+                        textAlign: 'left',
+                      }}
+                    >
+                      {s.time} {!s.available && '(Full)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="form-actions">
+              <button type="button" className="btn-cancel" onClick={() => setRescheduleBooking(null)}>Cancel</button>
+              <button
+                type="button"
+                className="btn-save"
+                disabled={!rescheduleDate || !rescheduleSelected || rescheduleLoading}
+                onClick={handleRescheduleSubmit}
+              >
+                {rescheduleLoading ? 'Rescheduling...' : 'Confirm Reschedule'}
+              </button>
+            </div>
           </div>
         </div>
       )}
